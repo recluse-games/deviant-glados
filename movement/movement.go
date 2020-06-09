@@ -25,9 +25,9 @@ type Node struct {
 func (n *Node) F() int {
 	if n.DistanceToTarget != -1 && n.Cost != -1 {
 		return n.DistanceToTarget + n.Cost
-	} else {
-		return -1
 	}
+
+	return -1
 }
 
 // Stack A basic stack structure.
@@ -43,12 +43,7 @@ type Astar struct {
 
 // Push adds a node to the stack.
 func (s *Stack) Push(n *Node) {
-	if s.count >= len(s.nodes) {
-		nodes := make([]*Node, len(s.nodes)*2)
-		copy(nodes, s.nodes)
-		s.nodes = nodes
-	}
-	s.nodes[s.count] = n
+	s.nodes = append(s.nodes, n)
 	s.count++
 }
 
@@ -63,7 +58,7 @@ func (s *Stack) Pop() *Node {
 }
 
 // Contains determins if a slice contains a particular entry.
-func Contains(a []Node, x Node) bool {
+func Contains(a []*Node, x *Node) bool {
 	for _, n := range a {
 		if x.Position.X == n.Position.X && x.Position.Y == n.Position.Y {
 			return true
@@ -73,11 +68,11 @@ func Contains(a []Node, x Node) bool {
 }
 
 // RemoveIndex Removes an entry from a slice
-func (a *Astar) RemoveIndex(s []Node, index int) []Node {
+func (a *Astar) RemoveIndex(s []*Node, index int) []*Node {
 	return append(s[:index], s[index+1:]...)
 }
 
-func indexOf(element Node, data []Node) int {
+func indexOf(element *Node, data []*Node) int {
 	for k, v := range data {
 		if element.Position.X == v.Position.X && element.Position.Y == v.Position.Y {
 			return k
@@ -87,8 +82,8 @@ func indexOf(element Node, data []Node) int {
 }
 
 // FindPath Finds an A* path to your desired endLocation if possible.
-func (a *Astar) FindPath(startLocation *Vertex, endLocation *Vertex, avaliableAp int) Stack {
-	start := Node{
+func (a *Astar) FindPath(startLocation *Vertex, endLocation *Vertex, avaliableAp int) *Stack {
+	start := &Node{
 		Parent:           nil,
 		Position:         startLocation,
 		DistanceToTarget: -1,
@@ -97,7 +92,7 @@ func (a *Astar) FindPath(startLocation *Vertex, endLocation *Vertex, avaliableAp
 		Walkable:         true,
 	}
 
-	end := Node{
+	end := &Node{
 		Parent:           nil,
 		Position:         endLocation,
 		DistanceToTarget: -1,
@@ -106,23 +101,27 @@ func (a *Astar) FindPath(startLocation *Vertex, endLocation *Vertex, avaliableAp
 		Walkable:         true,
 	}
 
-	path := Stack{}
-	openList := []Node{}
-	closedList := []Node{}
-	adjacencies := []Node{}
+	path := &Stack{
+		nodes: make([]*Node, 0),
+	}
+	openList := []*Node{}
+	closedList := []*Node{}
+	adjacencies := []*Node{}
 
 	current := start
 
-	for len(openList) != 0 && Contains(closedList, end) != true {
+	openList = append(openList, start)
+
+	for len(openList) != 0 && Contains(closedList, end) == false {
 		current = openList[0]
-		a.RemoveIndex(openList, 0)
+		openList = a.RemoveIndex(openList, 0)
 		closedList = append(closedList, current)
 		adjacencies = a.GetAdjacentNodes(current)
 
 		for _, n := range adjacencies {
 			if Contains(closedList, n) == false && n.Walkable {
-				if Contains(openList, n) {
-					n.Parent = &current
+				if Contains(openList, n) == false {
+					n.Parent = current
 					n.DistanceToTarget = int(math.Abs(float64(n.Position.X-end.Position.X)) + math.Abs(float64(n.Position.Y-end.Position.Y)))
 					n.Cost = n.Weight + n.Parent.Cost
 					openList = append(openList, n)
@@ -133,20 +132,25 @@ func (a *Astar) FindPath(startLocation *Vertex, endLocation *Vertex, avaliableAp
 	}
 
 	if Contains(closedList, end) == false {
-		return Stack{}
+		return nil
 	}
 
 	temp := closedList[indexOf(current, closedList)]
-	if (temp == Node{}) {
-		return Stack{}
+
+	if temp == nil {
+		return nil
 	}
 
-	for (temp != start && temp != Node{}) {
-		if temp.Cost <= avaliableAp {
-			path.Push(&temp)
-			temp = *temp.Parent
+	for {
+		if temp == nil || temp == start {
+			break
+		}
+
+		if temp.Cost <= avaliableAp+1 {
+			path.Push(temp)
+			temp = temp.Parent
 		} else {
-			return Stack{}
+			return nil
 		}
 	}
 
@@ -164,23 +168,23 @@ func (a *Astar) GridCols() int {
 }
 
 // GetAdjacentNodes returns the adjacent nodes starting from a node.
-func (a *Astar) GetAdjacentNodes(n Node) []Node {
-	temp := []Node{}
+func (a *Astar) GetAdjacentNodes(n *Node) []*Node {
+	temp := []*Node{}
 
 	row := n.Position.X
 	col := n.Position.Y
 
 	if row+1 < a.GridRows() {
-		temp = append(temp, a.Grid[col][row+1])
+		temp = append(temp, &a.Grid[col][row+1])
 	}
 	if row-1 >= 0 {
-		temp = append(temp, a.Grid[col][row-1])
+		temp = append(temp, &a.Grid[col][row-1])
 	}
 	if col-1 >= 0 {
-		temp = append(temp, a.Grid[col-1][row])
+		temp = append(temp, &a.Grid[col-1][row])
 	}
 	if col+1 < a.GridCols() {
-		temp = append(temp, a.Grid[col+1][row])
+		temp = append(temp, &a.Grid[col+1][row])
 	}
 
 	return temp

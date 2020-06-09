@@ -27,7 +27,7 @@ func generateGrid() [][]Node {
 	return grid
 }
 
-func FindPath(t *testing.T) {
+func TestFindPath(t *testing.T) {
 	var startingVertex = Vertex{
 		X: 0,
 		Y: 0,
@@ -42,7 +42,9 @@ func FindPath(t *testing.T) {
 		Grid: generateGrid(),
 	}
 
-	aStarStack := testingAstar.FindPath(&startingVertex, &endingVertex, 5)
+	aStarStack := testingAstar.FindPath(&startingVertex, &endingVertex, 10)
 
-	t.Log(aStarStack.Pop())
+	if aStarStack.count <= 0 {
+		t.Fail()
+	}
 }
