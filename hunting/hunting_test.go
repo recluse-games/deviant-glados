@@ -874,37 +874,55 @@ func generateMatch() *deviant.Encounter {
 
 func TestGenerateCardVertexPairs(t *testing.T) {
 	match := generateMatch()
-
-	cardVertexPairsNorth := GenerateCardVertexPairs(match.ActiveEntity, match.Board.Entities.Entities, deviant.EntityRotationNames_NORTH)
-	cardVertexPairsSouth := GenerateCardVertexPairs(match.ActiveEntity, match.Board.Entities.Entities, deviant.EntityRotationNames_SOUTH)
-	cardVertexPairsEast := GenerateCardVertexPairs(match.ActiveEntity, match.Board.Entities.Entities, deviant.EntityRotationNames_EAST)
-	cardVertexPairsWest := GenerateCardVertexPairs(match.ActiveEntity, match.Board.Entities.Entities, deviant.EntityRotationNames_WEST)
-
-	for _, vertexPair := range cardVertexPairsNorth {
-		t.Log("North")
-		t.Log(vertexPair.vertex)
-		t.Log(vertexPair.card.GetId())
+	startingVertex := &gridNode{
+		X: 0,
+		Y: 0,
 	}
 
-	for _, vertexPair := range cardVertexPairsSouth {
-		t.Log("South")
-		t.Log(vertexPair.vertex)
-		t.Log(vertexPair.card.GetId())
-	}
+	cardVertexPairsNorth := GenerateCardVertexPairs(startingVertex, match.ActiveEntity, match.Board.Entities.Entities, deviant.EntityRotationNames_NORTH)
+	cardVertexPairsSouth := GenerateCardVertexPairs(startingVertex, match.ActiveEntity, match.Board.Entities.Entities, deviant.EntityRotationNames_SOUTH)
+	cardVertexPairsEast := GenerateCardVertexPairs(startingVertex, match.ActiveEntity, match.Board.Entities.Entities, deviant.EntityRotationNames_EAST)
+	cardVertexPairsWest := GenerateCardVertexPairs(startingVertex, match.ActiveEntity, match.Board.Entities.Entities, deviant.EntityRotationNames_WEST)
 
-	for _, vertexPair := range cardVertexPairsEast {
-		t.Log("East")
-		t.Log(vertexPair.vertex)
-		t.Log(vertexPair.card.GetId())
-	}
-
-	for _, vertexPair := range cardVertexPairsWest {
-		t.Log("West")
-		t.Log(vertexPair.vertex)
-		t.Log(vertexPair.card.GetId())
-	}
-
+	// This is a super low value test this should be replaced with one verifying the contents of each rotation based on a static match.
 	if len(cardVertexPairsNorth) <= 0 {
 		t.Fail()
+	}
+	if len(cardVertexPairsSouth) <= 0 {
+		t.Fail()
+	}
+	if len(cardVertexPairsEast) <= 0 {
+		t.Fail()
+	}
+	if len(cardVertexPairsWest) <= 0 {
+		t.Fail()
+	}
+}
+
+func TestGenerateAllLocationMoveCombinations(t *testing.T) {
+	match := generateMatch()
+
+	GenerateAllLocationMoveCombinations(match.ActiveEntity, match.Board.Entities.Entities, match)
+}
+
+func TestFilterCardPlaysToHits(t *testing.T) {
+	match := generateMatch()
+
+	GenerateAllLocationMoveCombinations(match.ActiveEntity, match.Board.Entities.Entities, match)
+	FilterCardPlaysToHits(match.Board.Entities.Entities, match, deviant.Alignment_NEUTRAL)
+
+}
+
+func TestSortCardPlaysByDamageInflicted(t *testing.T) {
+	match := generateMatch()
+
+	allHittingMoveCombinations := FilterCardPlaysToHits(match.Board.Entities.Entities, match, deviant.Alignment_NEUTRAL)
+	bestMovesInDamageOrder := SortCardPlaysByDamageInflicted(allHittingMoveCombinations, match.Board.Entities)
+
+	for _, vertex := range bestMovesInDamageOrder {
+		t.Log(vertex.cardVertexPair.card.Id)
+		t.Log(vertex.damage)
+		t.Log(vertex.origin)
+		t.Log(vertex.rotation)
 	}
 }

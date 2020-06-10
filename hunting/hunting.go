@@ -4,10 +4,18 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"sort"
 
 	"github.com/golang/glog"
 	deviant "github.com/recluse-games/deviant-protobuf/genproto/go"
 )
+
+type gridNode struct {
+	Id     string
+	X      int32
+	Y      int32
+	apCost int
+}
 
 type gridLocation struct {
 	X float64
@@ -32,21 +40,31 @@ type CardVertexPair struct {
 	vertex *Vertex
 }
 
+type CardVertexRotationPair struct {
+	deaths         int
+	damage         int
+	origin         *Vertex
+	cardVertexPair *CardVertexPair
+	rotation       deviant.EntityRotationNames
+}
+
 // GenerateEntityLocationPairs Returns the entities of a certain alignment and their locations in points.
 func GenerateEntityLocationPairs(alignment deviant.Alignment, entities []*deviant.EntitiesRow) []EntityVertexPair {
 	entityVertexPairs := []EntityVertexPair{}
 
 	for y, entityRow := range entities {
 		for x, entity := range entityRow.Entities {
-			entityVertexPair := EntityVertexPair{
-				entity: entity,
-				vertex: &Vertex{
-					X: x,
-					Y: y,
-				},
-			}
+			if entity.Id != "" && entity.Alignment == alignment {
+				entityVertexPair := EntityVertexPair{
+					entity: entity,
+					vertex: &Vertex{
+						X: x,
+						Y: y,
+					},
+				}
 
-			entityVertexPairs = append(entityVertexPairs, entityVertexPair)
+				entityVertexPairs = append(entityVertexPairs, entityVertexPair)
+			}
 		}
 	}
 
@@ -72,7 +90,7 @@ func GetEntityVertex(desiredEntity *deviant.Entity, entities []*deviant.Entities
 }
 
 // Generate a list of all avaliable locations based on AP cost - FloodFill
-func floodFill(startx int32, starty int32, x int32, y int32, filledID string, blockedID string, limit int32, tiles []*[]*deviant.Tile) {
+func floodFill(startx int32, starty int32, x int32, y int32, filledID string, blockedID string, limit int32, tiles []*[]*gridNode) {
 	if (*tiles[x])[y].Id != blockedID && (*tiles[x])[y].Id != filledID {
 		var apCostX int32
 		var apCostY int32
@@ -93,10 +111,11 @@ func floodFill(startx int32, starty int32, x int32, y int32, filledID string, bl
 			apCostY = 0
 		}
 
-		newTile := &deviant.Tile{}
+		newTile := &gridNode{}
 		newTile.X = int32(x)
 		newTile.Y = int32(y)
 		newTile.Id = filledID
+		newTile.apCost = int(apCostX + apCostY)
 		(*tiles[x])[y] = newTile
 
 		message := fmt.Sprintf("%v", (*tiles[x])[y].Id)
@@ -123,15 +142,15 @@ func floodFill(startx int32, starty int32, x int32, y int32, filledID string, bl
 }
 
 // GeneratePermissableMoves Generate a list of permissable moves.
-func GeneratePermissableMoves(requestedMoveAction *deviant.EntityMoveAction, avaliableAp int32, entities *deviant.Entities) []*deviant.Tile {
-	finalTiles := []*deviant.Tile{}
-	moveTargetTiles := []*[]*deviant.Tile{}
+func GeneratePermissableMoves(requestedMoveAction *deviant.EntityMoveAction, avaliableAp int32, entities *deviant.Entities) []*gridNode {
+	finalTiles := []*gridNode{}
+	moveTargetTiles := []*[]*gridNode{}
 
 	for y := 0; y < len(entities.Entities); y++ {
-		newRow := []*deviant.Tile{}
+		newRow := []*gridNode{}
 
 		for x := 0; x < len(entities.Entities[y].Entities); x++ {
-			newTile := deviant.Tile{}
+			newTile := gridNode{}
 			newTile.X = int32(y)
 			newTile.Y = int32(x)
 
@@ -163,30 +182,28 @@ func GeneratePermissableMoves(requestedMoveAction *deviant.EntityMoveAction, ava
 }
 
 // IsMovePermissiable Determines if the move is permissable using a flood fill algorithm and ap cost.
-func IsMovePermissiable(activeEntity *deviant.Entity, requestedMoveAction *deviant.EntityMoveAction, encounter *deviant.Encounter) bool {
-	isRequestedMoveValid := false
-
+func IsMovePermissiable(activeEntity *deviant.Entity, requestedMoveAction *deviant.EntityMoveAction, encounter *deviant.Encounter) *gridNode {
 	validTiles := GeneratePermissableMoves(requestedMoveAction, activeEntity.Ap, encounter.Board.Entities)
 
 	for _, tile := range validTiles {
 		if tile.X == requestedMoveAction.FinalXPosition && tile.Y == requestedMoveAction.FinalYPosition {
-			isRequestedMoveValid = true
+			return tile
 		}
 	}
 
-	return isRequestedMoveValid
+	return nil
 }
 
 // GenerateValidMoveVertexes Generate list of vertexs
-func GenerateValidMoveVertexes(entity *deviant.Entity, entities []*deviant.EntitiesRow, encounter *deviant.Encounter) *Vertex {
-	validMoveVertexs := []*Vertex{}
+func GenerateValidMoveVertexes(entity *deviant.Entity, entities []*deviant.EntitiesRow, encounter *deviant.Encounter) []*gridNode {
+	validMoveVertexGraphNodes := []*gridNode{}
 	startingLocation := GetEntityVertex(entity, entities)
 
 	for y, entityRow := range entities {
 		for x, entity := range entityRow.Entities {
-			entityVertexPair := &Vertex{
-				X: x,
-				Y: y,
+			entityVertexPair := &gridNode{
+				X: int32(x),
+				Y: int32(y),
 			}
 
 			desiredMove := &deviant.EntityMoveAction{
@@ -196,18 +213,16 @@ func GenerateValidMoveVertexes(entity *deviant.Entity, entities []*deviant.Entit
 				FinalYPosition: int32(entityVertexPair.Y),
 			}
 
-			isVertexValid := IsMovePermissiable(entity, desiredMove, encounter)
+			validVertexGraphNode := IsMovePermissiable(entity, desiredMove, encounter)
 
-			if isVertexValid {
-				validMoveVertexs = append(validMoveVertexs, entityVertexPair)
+			if validVertexGraphNode != nil {
+				validMoveVertexGraphNodes = append(validMoveVertexGraphNodes, validVertexGraphNode)
 			}
 		}
 	}
 
-	return nil
+	return validMoveVertexGraphNodes
 }
-
-// LOOP
 
 // Generate list of all avaliable cards in hand in each rotation at current location based on avaliable AP
 func rotateTilePatterns(ocx float64, ocy float64, px float64, py float64, rotationAngle float64) *gridLocation {
@@ -296,7 +311,7 @@ func generateOffSetVertex(startingLocation *Vertex, offSet *deviant.Offset) *Ver
 	return nil
 }
 
-func generatePatternVertex(startingLocation *Vertex, offSet *Vertex, direction deviant.Direction, distance int32) []*Vertex {
+func generatePatternVertex(startingLocation *gridNode, offSet *Vertex, direction deviant.Direction, distance int32) []*Vertex {
 	patternVertexes := []*Vertex{}
 
 	switch direction {
@@ -304,8 +319,8 @@ func generatePatternVertex(startingLocation *Vertex, offSet *Vertex, direction d
 		newVertex := &Vertex{}
 		for i := 0; int32(i) < distance; i++ {
 			newVertex = &Vertex{
-				X: startingLocation.X + offSet.X,
-				Y: startingLocation.Y + offSet.Y,
+				X: int(startingLocation.X) + offSet.X,
+				Y: int(startingLocation.Y) + offSet.Y,
 			}
 
 			patternVertexes = append(patternVertexes, newVertex)
@@ -317,8 +332,8 @@ func generatePatternVertex(startingLocation *Vertex, offSet *Vertex, direction d
 		newVertex := &Vertex{}
 		for i := 0; int32(i) < distance; i++ {
 			newVertex = &Vertex{
-				X: startingLocation.X + offSet.X,
-				Y: startingLocation.Y + offSet.Y,
+				X: int(startingLocation.X) + offSet.X,
+				Y: int(startingLocation.Y) + offSet.Y,
 			}
 
 			patternVertexes = append(patternVertexes, newVertex)
@@ -330,8 +345,8 @@ func generatePatternVertex(startingLocation *Vertex, offSet *Vertex, direction d
 		newVertex := &Vertex{}
 		for i := 0; int32(i) < distance; i++ {
 			newVertex = &Vertex{
-				X: startingLocation.X + offSet.X,
-				Y: startingLocation.Y + offSet.Y,
+				X: int(startingLocation.X) + offSet.X,
+				Y: int(startingLocation.Y) + offSet.Y,
 			}
 
 			patternVertexes = append(patternVertexes, newVertex)
@@ -343,8 +358,8 @@ func generatePatternVertex(startingLocation *Vertex, offSet *Vertex, direction d
 		newVertex := &Vertex{}
 		for i := 0; int32(i) < distance; i++ {
 			newVertex = &Vertex{
-				X: startingLocation.X + offSet.X,
-				Y: startingLocation.Y + offSet.Y,
+				X: int(startingLocation.X) + offSet.X,
+				Y: int(startingLocation.Y) + offSet.Y,
 			}
 
 			patternVertexes = append(patternVertexes, newVertex)
@@ -357,33 +372,32 @@ func generatePatternVertex(startingLocation *Vertex, offSet *Vertex, direction d
 	return nil
 }
 
-func GenerateCardVertexPairs(entity *deviant.Entity, entities []*deviant.EntitiesRow, rotation deviant.EntityRotationNames) []*CardVertexPair {
+func GenerateCardVertexPairs(location *gridNode, entity *deviant.Entity, entities []*deviant.EntitiesRow, rotation deviant.EntityRotationNames) []*CardVertexRotationPair {
 	nonRotatedCardVertexPairs := []*CardVertexPair{}
-	rotatedCardVertexPairs := []*CardVertexPair{}
-	entityLocation := GetEntityVertex(entity, entities)
+	rotatedCardVertexPairs := []*CardVertexRotationPair{}
 
 	for _, card := range entity.Hand.Cards {
-		for _, play := range card.Action.Pattern {
-			offsetVertex := &Vertex{
-				X: 0,
-				Y: 0,
-			}
-
-			for _, offSet := range play.Offset {
-				offsetVertex = generateOffSetVertex(offsetVertex, offSet)
-			}
-
-			playPatternVertexes := generatePatternVertex(entityLocation, offsetVertex, play.Direction, play.Distance)
-
-			for _, vertex := range playPatternVertexes {
-				cardVertexPair := &CardVertexPair{
-					card:   card,
-					vertex: vertex,
+		if card.Cost <= entity.Ap-int32(location.apCost) {
+			for _, play := range card.Action.Pattern {
+				offsetVertex := &Vertex{
+					X: 0,
+					Y: 0,
 				}
 
-				log.Output(0, fmt.Sprintf("%v", cardVertexPair.vertex))
+				for _, offSet := range play.Offset {
+					offsetVertex = generateOffSetVertex(offsetVertex, offSet)
+				}
 
-				nonRotatedCardVertexPairs = append(nonRotatedCardVertexPairs, cardVertexPair)
+				playPatternVertexes := generatePatternVertex(location, offsetVertex, play.Direction, play.Distance)
+
+				for _, vertex := range playPatternVertexes {
+					cardVertexPair := &CardVertexPair{
+						card:   card,
+						vertex: vertex,
+					}
+
+					nonRotatedCardVertexPairs = append(nonRotatedCardVertexPairs, cardVertexPair)
+				}
 			}
 		}
 	}
@@ -392,17 +406,20 @@ func GenerateCardVertexPairs(entity *deviant.Entity, entities []*deviant.Entitie
 
 		// CAUTION: HACK - This logic should be moved somewhere else to apply rotations directly to the cards themselves maybe?
 		var rotationDegree = convertDirectionToDegree(rotation)
-		var rotatedPlayPair = rotateTilePatterns(float64(entityLocation.X), float64(entityLocation.Y), float64(cardVertexPair.vertex.X), float64(cardVertexPair.vertex.Y), rotationDegree)
+		var rotatedPlayPair = rotateTilePatterns(float64(location.X), float64(location.Y), float64(cardVertexPair.vertex.X), float64(cardVertexPair.vertex.Y), rotationDegree)
 
 		var x = int(math.RoundToEven(rotatedPlayPair.X))
 		var y = int(math.RoundToEven(rotatedPlayPair.Y))
 
-		rotatedCardVertexPair := &CardVertexPair{
-			vertex: &Vertex{
-				X: x,
-				Y: y,
+		rotatedCardVertexPair := &CardVertexRotationPair{
+			cardVertexPair: &CardVertexPair{
+				vertex: &Vertex{
+					X: x,
+					Y: y,
+				},
+				card: cardVertexPair.card,
 			},
-			card: cardVertexPair.card,
+			rotation: rotation,
 		}
 
 		rotatedCardVertexPairs = append(rotatedCardVertexPairs, rotatedCardVertexPair)
@@ -411,15 +428,81 @@ func GenerateCardVertexPairs(entity *deviant.Entity, entities []*deviant.Entitie
 	return rotatedCardVertexPairs
 }
 
-// Move to next avaliable location
+// Generate a list of all plays at all locations with avaliable AP.
+func GenerateAllLocationMoveCombinations(entity *deviant.Entity, entities []*deviant.EntitiesRow, encounter *deviant.Encounter) []*CardVertexRotationPair {
+	cardVertexRotationPairs := []*CardVertexRotationPair{}
 
-// Decrement AP
+	entityRotations := []deviant.EntityRotationNames{
+		deviant.EntityRotationNames_NORTH, deviant.EntityRotationNames_SOUTH, deviant.EntityRotationNames_EAST, deviant.EntityRotationNames_WEST,
+	}
+	validMoveVertexes := GenerateValidMoveVertexes(entity, entities, encounter)
+	log.Output(0, fmt.Sprintf("%v", validMoveVertexes))
 
-// END
+	for _, moveVertex := range validMoveVertexes {
+		for _, rotation := range entityRotations {
+			generatedPairs := GenerateCardVertexPairs(moveVertex, entity, entities, rotation)
+
+			for _, generatedPair := range generatedPairs {
+				// Include the origin point along with the rotation and card for this move.
+				generatedPair.origin = &Vertex{
+					X: int(moveVertex.X),
+					Y: int(moveVertex.Y),
+				}
+
+				cardVertexRotationPairs = append(cardVertexRotationPairs, generatedPair)
+			}
+		}
+	}
+
+	return cardVertexRotationPairs
+}
 
 // Filter list of all plays down to plays which hit an enemy
 
+func FilterCardPlaysToHits(entities []*deviant.EntitiesRow, encounter *deviant.Encounter, alignment deviant.Alignment) []*CardVertexRotationPair {
+
+	locationMoveCombinationsThatHit := []*CardVertexRotationPair{}
+	entityLocationPairs := GenerateEntityLocationPairs(alignment, entities)
+	allLocationMoveCombinations := GenerateAllLocationMoveCombinations(encounter.ActiveEntity, entities, encounter)
+
+	for _, locationMoveCombination := range allLocationMoveCombinations {
+		for _, entityLocationPair := range entityLocationPairs {
+			if locationMoveCombination.cardVertexPair.vertex.X == entityLocationPair.vertex.X && locationMoveCombination.cardVertexPair.vertex.Y == entityLocationPair.vertex.Y {
+				locationMoveCombinationsThatHit = append(locationMoveCombinationsThatHit, locationMoveCombination)
+			}
+		}
+	}
+
+	return locationMoveCombinationsThatHit
+}
+
 // Determine HP of each enemy after each hit
+
+func SortCardPlaysByDamageInflicted(cardVertexRotationPairs []*CardVertexRotationPair, entities *deviant.Entities) []*CardVertexRotationPair {
+
+	// This logic isn't actually the correct damage number but it is
+	for _, cardVertexRotationPair := range cardVertexRotationPairs {
+		effectiveDamage := entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].Hp - cardVertexRotationPair.cardVertexPair.card.Damage
+
+		// Remove overkill damage
+		if effectiveDamage < 0 {
+			effectiveDamage = 0
+		}
+
+		for _, otherCardVertexRotationPairs := range cardVertexRotationPairs {
+			if otherCardVertexRotationPairs.cardVertexPair.card.InstanceId == cardVertexRotationPair.cardVertexPair.card.InstanceId && otherCardVertexRotationPairs.origin.X == cardVertexRotationPair.origin.X && otherCardVertexRotationPairs.origin.Y == cardVertexRotationPair.origin.Y && otherCardVertexRotationPairs.rotation == cardVertexRotationPair.rotation {
+				effectiveDamage += cardVertexRotationPair.cardVertexPair.card.Damage
+			}
+		}
+
+		cardVertexRotationPair.damage = int(effectiveDamage)
+	}
+
+	// Sort the slice by highest damage
+	sort.SliceStable(cardVertexRotationPairs, func(i, j int) bool { return cardVertexRotationPairs[i].damage < cardVertexRotationPairs[j].damage })
+
+	return cardVertexRotationPairs
+}
 
 // Sort list by lowest enemy HP
 
