@@ -502,11 +502,17 @@ func FilterCardPlaysToHits(entities []*deviant.EntitiesRow, encounter *deviant.E
 
 // Determine HP of each enemy after each hit
 
-func SortCardPlaysByDamageInflicted(cardVertexRotationPairs []*CardVertexRotationPair, entities *deviant.Entities) []*CardVertexRotationPair {
+func SortCardPlaysByDamageInflicted(alignment deviant.Alignment, cardVertexRotationPairs []*CardVertexRotationPair, entities *deviant.Entities) []*CardVertexRotationPair {
 
 	// This logic isn't actually the correct damage number but it is
 	for _, cardVertexRotationPair := range cardVertexRotationPairs {
-		effectiveDamage := entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].MaxHp - (entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].Hp - cardVertexRotationPair.cardVertexPair.card.Damage)
+		var effectiveDamage int32
+
+		if entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].Alignment == alignment {
+			effectiveDamage += entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].MaxHp - (entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].Hp - cardVertexRotationPair.cardVertexPair.card.Damage)
+		} else {
+			effectiveDamage -= entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].MaxHp - (entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].Hp - cardVertexRotationPair.cardVertexPair.card.Damage)
+		}
 
 		// Remove overkill damage
 		if effectiveDamage < 0 {
@@ -515,7 +521,13 @@ func SortCardPlaysByDamageInflicted(cardVertexRotationPairs []*CardVertexRotatio
 
 		for _, otherCardVertexRotationPairs := range cardVertexRotationPairs {
 			if cardVertexRotationPair.cardVertexPair.card.InstanceId == otherCardVertexRotationPairs.cardVertexPair.card.InstanceId && otherCardVertexRotationPairs.origin.X == cardVertexRotationPair.origin.X && otherCardVertexRotationPairs.origin.Y == cardVertexRotationPair.origin.Y && otherCardVertexRotationPairs.rotation == cardVertexRotationPair.rotation && (cardVertexRotationPair.cardVertexPair.vertex.X != otherCardVertexRotationPairs.cardVertexPair.vertex.X || otherCardVertexRotationPairs.cardVertexPair.vertex.Y != cardVertexRotationPair.cardVertexPair.vertex.Y) {
-				newDamage := entities.Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.X].Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.Y].MaxHp - (entities.Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.X].Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.Y].Hp - otherCardVertexRotationPairs.cardVertexPair.card.Damage)
+				var newDamage int32
+
+				if entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].Alignment == alignment {
+					newDamage -= entities.Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.X].Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.Y].MaxHp - (entities.Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.X].Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.Y].Hp - otherCardVertexRotationPairs.cardVertexPair.card.Damage)
+				} else {
+					newDamage += entities.Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.X].Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.Y].MaxHp - (entities.Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.X].Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.Y].Hp - otherCardVertexRotationPairs.cardVertexPair.card.Damage)
+				}
 
 				// Remove overkill damage
 				if newDamage < 0 {
@@ -700,7 +712,7 @@ func TakeTurn(encounterResponse *deviant.EncounterResponse, alignmentToHunt devi
 	encounterRequests := []*deviant.EncounterRequest{}
 
 	allHittingMoveCombinations := FilterCardPlaysToHits(encounterResponse.Encounter.Board.Entities.Entities, encounterResponse.Encounter, alignmentToHunt)
-	bestMovesInDamageOrder := SortCardPlaysByDamageInflicted(allHittingMoveCombinations, encounterResponse.Encounter.Board.Entities)
+	bestMovesInDamageOrder := SortCardPlaysByDamageInflicted(alignmentToHunt, allHittingMoveCombinations, encounterResponse.Encounter.Board.Entities)
 	entityLocationVertexPairs := GenerateEntityLocationPairs(alignmentToHunt, encounterResponse.Encounter.Board.Entities.Entities)
 
 	theBestPlay := GetPlayThatDealsTheMostDamageToTheLowestHealthTargets(bestMovesInDamageOrder, entityLocationVertexPairs)
