@@ -627,6 +627,15 @@ func GenerateTargetAction(cardVertexRotationPair *CardVertexRotationPair, encoun
 	return encounterOverlayTilesRequest
 }
 
+func GenerateClearTargetAction(encounter *deviant.Encounter) *deviant.EncounterRequest {
+	// Update the Server With Newly Highlighted Overlay Tiles
+	encounterOverlayTilesRequest := &deviant.EncounterRequest{}
+	encounterOverlayTilesRequest.EntityTargetAction = &deviant.EntityTargetAction{}
+	encounterOverlayTilesRequest.EntityTargetAction.Id = encounter.ActiveEntity.Id
+	encounterOverlayTilesRequest.EntityTargetAction.Tiles = []*deviant.Tile{}
+	return encounterOverlayTilesRequest
+}
+
 func GeneratePlayAction(cardVertexRotationPair *CardVertexRotationPair, encounter *deviant.Encounter) *deviant.EncounterRequest {
 	plays := []*deviant.Play{}
 
@@ -693,9 +702,13 @@ func TakeTurn(encounterResponse *deviant.EncounterResponse) []*deviant.Encounter
 		playEncounterRequest := GeneratePlayAction(theBestPlay, encounterResponse.Encounter)
 		playEncounterRequest.PlayerId = "0001"
 
+		clearTargetAction := GenerateClearTargetAction(encounterResponse.Encounter)
+		clearTargetAction.PlayerId = "0001"
+
 		encounterRequests = append(encounterRequests, moveEncounterRequest)
 		encounterRequests = append(encounterRequests, targetEncounterRequest)
 		encounterRequests = append(encounterRequests, playEncounterRequest)
+		encounterRequests = append(encounterRequests, clearTargetAction)
 	}
 
 	endTurnEncounterRequest := GenerateEndTurnAction(encounterResponse.Encounter)
