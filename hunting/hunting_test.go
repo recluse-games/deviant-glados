@@ -926,3 +926,17 @@ func TestSortCardPlaysByDamageInflicted(t *testing.T) {
 		t.Log(vertex.rotation)
 	}
 }
+
+func TestGetPlayThatDealsTheMostDamageToTheLowestHealthTargets(t *testing.T) {
+	match := generateMatch()
+
+	allHittingMoveCombinations := FilterCardPlaysToHits(match.Board.Entities.Entities, match, deviant.Alignment_NEUTRAL)
+	bestMovesInDamageOrder := SortCardPlaysByDamageInflicted(allHittingMoveCombinations, match.Board.Entities)
+	entityLocationVertexPairs := GenerateEntityLocationPairs(deviant.Alignment_NEUTRAL, match.Board.Entities.Entities)
+	theBestPlay := GetPlayThatDealsTheMostDamageToTheLowestHealthTargets(bestMovesInDamageOrder, entityLocationVertexPairs)
+
+	t.Log(theBestPlay.cardVertexPair.card.Id)
+	t.Log(theBestPlay.damage)
+	t.Log(theBestPlay.origin)
+	t.Log(theBestPlay.rotation)
+}

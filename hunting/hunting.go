@@ -6,7 +6,6 @@ import (
 	"math"
 	"sort"
 
-	"github.com/golang/glog"
 	deviant "github.com/recluse-games/deviant-protobuf/genproto/go"
 )
 
@@ -24,8 +23,9 @@ type gridLocation struct {
 
 // Vertex a vertex represents a point in our grid.
 type Vertex struct {
-	X int
-	Y int
+	X      int
+	Y      int
+	apCost int
 }
 
 // EntityVertexPair A mapping of entities and vertexs that they exist at.
@@ -49,17 +49,17 @@ type CardVertexRotationPair struct {
 }
 
 // GenerateEntityLocationPairs Returns the entities of a certain alignment and their locations in points.
-func GenerateEntityLocationPairs(alignment deviant.Alignment, entities []*deviant.EntitiesRow) []EntityVertexPair {
-	entityVertexPairs := []EntityVertexPair{}
+func GenerateEntityLocationPairs(alignment deviant.Alignment, entities []*deviant.EntitiesRow) []*EntityVertexPair {
+	entityVertexPairs := []*EntityVertexPair{}
 
 	for y, entityRow := range entities {
 		for x, entity := range entityRow.Entities {
 			if entity.Id != "" && entity.Alignment == alignment {
-				entityVertexPair := EntityVertexPair{
+				entityVertexPair := &EntityVertexPair{
 					entity: entity,
 					vertex: &Vertex{
-						X: x,
-						Y: y,
+						X: y,
+						Y: x,
 					},
 				}
 
@@ -77,15 +77,14 @@ func GetEntityVertex(desiredEntity *deviant.Entity, entities []*deviant.Entities
 		for x, entity := range entityRow.Entities {
 			if desiredEntity.Id == entity.Id {
 				entityVertexPair := &Vertex{
-					X: x,
-					Y: y,
+					X: y,
+					Y: x,
 				}
 
 				return entityVertexPair
 			}
 		}
 	}
-
 	return nil
 }
 
@@ -117,9 +116,6 @@ func floodFill(startx int32, starty int32, x int32, y int32, filledID string, bl
 		newTile.Id = filledID
 		newTile.apCost = int(apCostX + apCostY)
 		(*tiles[x])[y] = newTile
-
-		message := fmt.Sprintf("%v", (*tiles[x])[y].Id)
-		glog.Info(message)
 
 		if limit-apCostX-apCostY >= 0 {
 			if x+1 <= 8 {
@@ -372,6 +368,58 @@ func generatePatternVertex(startingLocation *gridNode, offSet *Vertex, direction
 	return nil
 }
 
+func GenerateCardVertexPair(card *deviant.Card, location *gridNode, entity *deviant.Entity, entities []*deviant.EntitiesRow, rotation deviant.EntityRotationNames) []*CardVertexRotationPair {
+	nonRotatedCardVertexPairs := []*CardVertexPair{}
+	rotatedCardVertexPairs := []*CardVertexRotationPair{}
+
+	for _, play := range card.Action.Pattern {
+		offsetVertex := &Vertex{
+			X: 0,
+			Y: 0,
+		}
+
+		for _, offSet := range play.Offset {
+			offsetVertex = generateOffSetVertex(offsetVertex, offSet)
+		}
+
+		playPatternVertexes := generatePatternVertex(location, offsetVertex, play.Direction, play.Distance)
+
+		for _, vertex := range playPatternVertexes {
+			cardVertexPair := &CardVertexPair{
+				card:   card,
+				vertex: vertex,
+			}
+
+			nonRotatedCardVertexPairs = append(nonRotatedCardVertexPairs, cardVertexPair)
+		}
+	}
+
+	for _, cardVertexPair := range nonRotatedCardVertexPairs {
+
+		// CAUTION: HACK - This logic should be moved somewhere else to apply rotations directly to the cards themselves maybe?
+		var rotationDegree = convertDirectionToDegree(rotation)
+		var rotatedPlayPair = rotateTilePatterns(float64(location.X), float64(location.Y), float64(cardVertexPair.vertex.X), float64(cardVertexPair.vertex.Y), rotationDegree)
+
+		var x = int(math.RoundToEven(rotatedPlayPair.X))
+		var y = int(math.RoundToEven(rotatedPlayPair.Y))
+
+		rotatedCardVertexPair := &CardVertexRotationPair{
+			cardVertexPair: &CardVertexPair{
+				vertex: &Vertex{
+					X: x,
+					Y: y,
+				},
+				card: cardVertexPair.card,
+			},
+			rotation: rotation,
+		}
+
+		rotatedCardVertexPairs = append(rotatedCardVertexPairs, rotatedCardVertexPair)
+	}
+
+	return rotatedCardVertexPairs
+}
+
 func GenerateCardVertexPairs(location *gridNode, entity *deviant.Entity, entities []*deviant.EntitiesRow, rotation deviant.EntityRotationNames) []*CardVertexRotationPair {
 	nonRotatedCardVertexPairs := []*CardVertexPair{}
 	rotatedCardVertexPairs := []*CardVertexRotationPair{}
@@ -436,7 +484,6 @@ func GenerateAllLocationMoveCombinations(entity *deviant.Entity, entities []*dev
 		deviant.EntityRotationNames_NORTH, deviant.EntityRotationNames_SOUTH, deviant.EntityRotationNames_EAST, deviant.EntityRotationNames_WEST,
 	}
 	validMoveVertexes := GenerateValidMoveVertexes(entity, entities, encounter)
-	log.Output(0, fmt.Sprintf("%v", validMoveVertexes))
 
 	for _, moveVertex := range validMoveVertexes {
 		for _, rotation := range entityRotations {
@@ -445,8 +492,9 @@ func GenerateAllLocationMoveCombinations(entity *deviant.Entity, entities []*dev
 			for _, generatedPair := range generatedPairs {
 				// Include the origin point along with the rotation and card for this move.
 				generatedPair.origin = &Vertex{
-					X: int(moveVertex.X),
-					Y: int(moveVertex.Y),
+					X:      int(moveVertex.X),
+					Y:      int(moveVertex.Y),
+					apCost: moveVertex.apCost,
 				}
 
 				cardVertexRotationPairs = append(cardVertexRotationPairs, generatedPair)
@@ -482,7 +530,7 @@ func SortCardPlaysByDamageInflicted(cardVertexRotationPairs []*CardVertexRotatio
 
 	// This logic isn't actually the correct damage number but it is
 	for _, cardVertexRotationPair := range cardVertexRotationPairs {
-		effectiveDamage := entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].Hp - cardVertexRotationPair.cardVertexPair.card.Damage
+		effectiveDamage := entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].MaxHp - (entities.Entities[cardVertexRotationPair.cardVertexPair.vertex.X].Entities[cardVertexRotationPair.cardVertexPair.vertex.Y].Hp - cardVertexRotationPair.cardVertexPair.card.Damage)
 
 		// Remove overkill damage
 		if effectiveDamage < 0 {
@@ -490,8 +538,15 @@ func SortCardPlaysByDamageInflicted(cardVertexRotationPairs []*CardVertexRotatio
 		}
 
 		for _, otherCardVertexRotationPairs := range cardVertexRotationPairs {
-			if otherCardVertexRotationPairs.cardVertexPair.card.InstanceId == cardVertexRotationPair.cardVertexPair.card.InstanceId && otherCardVertexRotationPairs.origin.X == cardVertexRotationPair.origin.X && otherCardVertexRotationPairs.origin.Y == cardVertexRotationPair.origin.Y && otherCardVertexRotationPairs.rotation == cardVertexRotationPair.rotation {
-				effectiveDamage += cardVertexRotationPair.cardVertexPair.card.Damage
+			if cardVertexRotationPair.cardVertexPair.card.InstanceId == otherCardVertexRotationPairs.cardVertexPair.card.InstanceId && otherCardVertexRotationPairs.origin.X == cardVertexRotationPair.origin.X && otherCardVertexRotationPairs.origin.Y == cardVertexRotationPair.origin.Y && otherCardVertexRotationPairs.rotation == cardVertexRotationPair.rotation && (cardVertexRotationPair.cardVertexPair.vertex.X != otherCardVertexRotationPairs.cardVertexPair.vertex.X || otherCardVertexRotationPairs.cardVertexPair.vertex.Y != cardVertexRotationPair.cardVertexPair.vertex.Y) {
+				newDamage := entities.Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.X].Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.Y].MaxHp - (entities.Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.X].Entities[otherCardVertexRotationPairs.cardVertexPair.vertex.Y].Hp - otherCardVertexRotationPairs.cardVertexPair.card.Damage)
+
+				// Remove overkill damage
+				if newDamage < 0 {
+					newDamage = 0
+				}
+
+				effectiveDamage += newDamage
 			}
 		}
 
@@ -499,13 +554,153 @@ func SortCardPlaysByDamageInflicted(cardVertexRotationPairs []*CardVertexRotatio
 	}
 
 	// Sort the slice by highest damage
-	sort.SliceStable(cardVertexRotationPairs, func(i, j int) bool { return cardVertexRotationPairs[i].damage < cardVertexRotationPairs[j].damage })
+	sort.SliceStable(cardVertexRotationPairs, func(i, j int) bool { return cardVertexRotationPairs[i].damage > cardVertexRotationPairs[j].damage })
 
 	return cardVertexRotationPairs
 }
 
 // Sort list by lowest enemy HP
+func GetPlayThatDealsTheMostDamageToTheLowestHealthTargets(cardVertexRotationPairs []*CardVertexRotationPair, entityVertexPairs []*EntityVertexPair) *CardVertexRotationPair {
+	sortedEntityVertexes := entityVertexPairs
+	sort.SliceStable(sortedEntityVertexes, func(i, j int) bool { return sortedEntityVertexes[i].entity.Hp < sortedEntityVertexes[j].entity.Hp })
 
-// Determine move that preserves the most ap but is highest on the list
+	for _, lowestHealthEnemy := range sortedEntityVertexes {
+		for _, cardVertexRotationPair := range cardVertexRotationPairs {
+			if cardVertexRotationPair.cardVertexPair.vertex.X == lowestHealthEnemy.vertex.X && cardVertexRotationPair.cardVertexPair.vertex.Y == lowestHealthEnemy.vertex.Y {
+				cardMovePlayThatDealsTheMostDamageToTheLowestHealthTargets := cardVertexRotationPair
+				return cardMovePlayThatDealsTheMostDamageToTheLowestHealthTargets
+			}
+		}
+	}
 
-// Return stream of actions to process.
+	return nil
+}
+
+func GenerateMoveAction(cardVertexRotationPair *CardVertexRotationPair, encounter *deviant.Encounter) *deviant.EncounterRequest {
+	entityMoveAction := &deviant.EntityMoveAction{
+		StartXPosition: int32(GetEntityVertex(encounter.ActiveEntity, encounter.Board.Entities.Entities).X),
+		StartYPosition: int32(GetEntityVertex(encounter.ActiveEntity, encounter.Board.Entities.Entities).Y),
+		FinalXPosition: int32(cardVertexRotationPair.origin.X),
+		FinalYPosition: int32(cardVertexRotationPair.origin.Y),
+	}
+
+	encounterRequest := &deviant.EncounterRequest{
+		PlayerId:         encounter.ActiveEntity.Id,
+		EntityActionName: deviant.EntityActionNames_MOVE,
+		EntityMoveAction: entityMoveAction,
+	}
+
+	return encounterRequest
+}
+
+func GenerateTargetAction(cardVertexRotationPair *CardVertexRotationPair, encounter *deviant.Encounter) *deviant.EncounterRequest {
+	targettedTiles := []*deviant.Tile{}
+
+	gridNode := &gridNode{
+		apCost: cardVertexRotationPair.cardVertexPair.vertex.apCost,
+		X:      int32(cardVertexRotationPair.origin.X),
+		Y:      int32(cardVertexRotationPair.origin.Y),
+	}
+
+	generatedPairs := GenerateCardVertexPair(cardVertexRotationPair.cardVertexPair.card, gridNode, encounter.ActiveEntity, encounter.Board.Entities.Entities, cardVertexRotationPair.rotation)
+
+	for _, generatedPair := range generatedPairs {
+		// Include the origin point along with the rotation and card for this move.
+		tile := &deviant.Tile{
+			X:  int32(generatedPair.cardVertexPair.vertex.X),
+			Y:  int32(generatedPair.cardVertexPair.vertex.Y),
+			Id: "select_0002",
+		}
+
+		targettedTiles = append(targettedTiles, tile)
+	}
+
+	// Update the Server With Newly Highlighted Overlay Tiles
+	encounterOverlayTilesRequest := &deviant.EncounterRequest{}
+	encounterOverlayTilesRequest.EntityTargetAction = &deviant.EntityTargetAction{}
+	encounterOverlayTilesRequest.EntityTargetAction.Id = encounter.ActiveEntity.Id
+	encounterOverlayTilesRequest.EntityTargetAction.Tiles = []*deviant.Tile{}
+	for _, tile := range targettedTiles {
+		encounterOverlayTilesRequest.EntityTargetAction.Tiles = append(encounterOverlayTilesRequest.EntityTargetAction.Tiles, tile)
+	}
+
+	return encounterOverlayTilesRequest
+}
+
+func GeneratePlayAction(cardVertexRotationPair *CardVertexRotationPair, encounter *deviant.Encounter) *deviant.EncounterRequest {
+	plays := []*deviant.Play{}
+
+	gridNode := &gridNode{
+		apCost: cardVertexRotationPair.cardVertexPair.vertex.apCost,
+		X:      int32(cardVertexRotationPair.origin.X),
+		Y:      int32(cardVertexRotationPair.origin.Y),
+	}
+
+	generatedPairs := GenerateCardVertexPair(cardVertexRotationPair.cardVertexPair.card, gridNode, encounter.ActiveEntity, encounter.Board.Entities.Entities, cardVertexRotationPair.rotation)
+
+	for _, generatedPair := range generatedPairs {
+		// Include the origin point along with the rotation and card for this move.
+		play := &deviant.Play{
+			X:  int32(generatedPair.cardVertexPair.vertex.X),
+			Y:  int32(generatedPair.cardVertexPair.vertex.Y),
+			Id: cardVertexRotationPair.cardVertexPair.card.InstanceId,
+		}
+
+		plays = append(plays, play)
+	}
+
+	// Update the Server With Newly Highlighted Overlay Tiles
+	encounterPlayActionRequest := &deviant.EncounterRequest{}
+	encounterPlayActionRequest.EntityPlayAction = &deviant.EntityPlayAction{}
+	encounterPlayActionRequest.EntityPlayAction.CardId = cardVertexRotationPair.cardVertexPair.card.InstanceId
+	encounterPlayActionRequest.EntityPlayAction.Plays = []*deviant.Play{}
+
+	for _, play := range plays {
+		encounterPlayActionRequest.EntityPlayAction.Plays = append(encounterPlayActionRequest.EntityPlayAction.Plays, play)
+	}
+
+	return encounterPlayActionRequest
+}
+
+func GenerateEndTurnAction(encounter *deviant.Encounter) *deviant.EncounterRequest {
+	encounterRequest := &deviant.EncounterRequest{
+		PlayerId:         encounter.ActiveEntity.Id,
+		EntityActionName: deviant.EntityActionNames_CHANGE_PHASE,
+	}
+
+	return encounterRequest
+}
+
+func TakeTurn(encounterResponse *deviant.EncounterResponse) []*deviant.EncounterRequest {
+
+	encounterRequests := []*deviant.EncounterRequest{}
+
+	allHittingMoveCombinations := FilterCardPlaysToHits(encounterResponse.Encounter.Board.Entities.Entities, encounterResponse.Encounter, deviant.Alignment_NEUTRAL)
+	bestMovesInDamageOrder := SortCardPlaysByDamageInflicted(allHittingMoveCombinations, encounterResponse.Encounter.Board.Entities)
+	entityLocationVertexPairs := GenerateEntityLocationPairs(deviant.Alignment_NEUTRAL, encounterResponse.Encounter.Board.Entities.Entities)
+	theBestPlay := GetPlayThatDealsTheMostDamageToTheLowestHealthTargets(bestMovesInDamageOrder, entityLocationVertexPairs)
+
+	log.Output(0, fmt.Sprintf("%v", encounterResponse.Encounter.ActiveEntity.Id))
+
+	if theBestPlay != nil {
+		moveEncounterRequest := GenerateMoveAction(theBestPlay, encounterResponse.Encounter)
+		log.Output(0, fmt.Sprintf("%v", moveEncounterRequest))
+
+		moveEncounterRequest.PlayerId = "0001"
+		targetEncounterRequest := GenerateTargetAction(theBestPlay, encounterResponse.Encounter)
+
+		targetEncounterRequest.PlayerId = "0001"
+		playEncounterRequest := GeneratePlayAction(theBestPlay, encounterResponse.Encounter)
+		playEncounterRequest.PlayerId = "0001"
+
+		encounterRequests = append(encounterRequests, moveEncounterRequest)
+		encounterRequests = append(encounterRequests, targetEncounterRequest)
+		encounterRequests = append(encounterRequests, playEncounterRequest)
+	}
+
+	endTurnEncounterRequest := GenerateEndTurnAction(encounterResponse.Encounter)
+	endTurnEncounterRequest.PlayerId = "0001"
+	encounterRequests = append(encounterRequests, endTurnEncounterRequest)
+
+	return encounterRequests
+}
