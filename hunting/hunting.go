@@ -9,6 +9,12 @@ import (
 	deviant "github.com/recluse-games/deviant-protobuf/genproto/go"
 )
 
+type manhattenPair struct {
+	distance int
+	X        int32
+	Y        int32
+}
+
 type gridNode struct {
 	Id     string
 	X      int32
@@ -138,7 +144,7 @@ func floodFill(startx int32, starty int32, x int32, y int32, filledID string, bl
 }
 
 // GeneratePermissableMoves Generate a list of permissable moves.
-func GeneratePermissableMoves(requestedMoveAction *deviant.EntityMoveAction, avaliableAp int32, entities *deviant.Entities) []*gridNode {
+func GeneratePermissableMoves(origin *gridNode, avaliableAp int32, entities *deviant.Entities) []*gridNode {
 	finalTiles := []*gridNode{}
 	moveTargetTiles := []*[]*gridNode{}
 
@@ -154,7 +160,7 @@ func GeneratePermissableMoves(requestedMoveAction *deviant.EntityMoveAction, ava
 				newTile.Id = "select_0002"
 			}
 
-			if int32(y) == requestedMoveAction.StartXPosition && int32(x) == requestedMoveAction.StartYPosition {
+			if int32(y) == origin.X && int32(x) == origin.Y {
 				newTile.Id = "select_0001"
 			}
 
@@ -164,7 +170,7 @@ func GeneratePermissableMoves(requestedMoveAction *deviant.EntityMoveAction, ava
 		moveTargetTiles = append(moveTargetTiles, &newRow)
 	}
 
-	floodFill(requestedMoveAction.StartXPosition, requestedMoveAction.StartYPosition, requestedMoveAction.StartXPosition, requestedMoveAction.StartYPosition, "select_0000", "select_0002", avaliableAp, moveTargetTiles)
+	floodFill(origin.X, origin.Y, origin.X, origin.Y, "select_0000", "select_0002", avaliableAp, moveTargetTiles)
 
 	for _, row := range moveTargetTiles {
 		for _, tile := range *row {
@@ -177,47 +183,17 @@ func GeneratePermissableMoves(requestedMoveAction *deviant.EntityMoveAction, ava
 	return finalTiles
 }
 
-// IsMovePermissiable Determines if the move is permissable using a flood fill algorithm and ap cost.
-func IsMovePermissiable(activeEntity *deviant.Entity, requestedMoveAction *deviant.EntityMoveAction, encounter *deviant.Encounter) *gridNode {
-	validTiles := GeneratePermissableMoves(requestedMoveAction, activeEntity.Ap, encounter.Board.Entities)
-
-	for _, tile := range validTiles {
-		if tile.X == requestedMoveAction.FinalXPosition && tile.Y == requestedMoveAction.FinalYPosition {
-			return tile
-		}
-	}
-
-	return nil
-}
-
 // GenerateValidMoveVertexes Generate list of vertexs
 func GenerateValidMoveVertexes(entity *deviant.Entity, entities []*deviant.EntitiesRow, encounter *deviant.Encounter) []*gridNode {
-	validMoveVertexGraphNodes := []*gridNode{}
-	startingLocation := GetEntityVertex(entity, entities)
-
-	for y, entityRow := range entities {
-		for x, entity := range entityRow.Entities {
-			entityVertexPair := &gridNode{
-				X: int32(x),
-				Y: int32(y),
-			}
-
-			desiredMove := &deviant.EntityMoveAction{
-				StartXPosition: int32(startingLocation.X),
-				StartYPosition: int32(startingLocation.Y),
-				FinalXPosition: int32(entityVertexPair.X),
-				FinalYPosition: int32(entityVertexPair.Y),
-			}
-
-			validVertexGraphNode := IsMovePermissiable(entity, desiredMove, encounter)
-
-			if validVertexGraphNode != nil {
-				validMoveVertexGraphNodes = append(validMoveVertexGraphNodes, validVertexGraphNode)
-			}
-		}
+	entityVertex := GetEntityVertex(entity, entities)
+	entityGraphNode := &gridNode{
+		X: int32(entityVertex.X),
+		Y: int32(entityVertex.Y),
 	}
 
-	return validMoveVertexGraphNodes
+	validTiles := GeneratePermissableMoves(entityGraphNode, entity.Ap, encounter.Board.Entities)
+
+	return validTiles
 }
 
 // Generate list of all avaliable cards in hand in each rotation at current location based on avaliable AP
@@ -680,39 +656,80 @@ func GenerateEndTurnAction(encounter *deviant.Encounter) *deviant.EncounterReque
 	return encounterRequest
 }
 
+func GenerateClosestMove(alignment deviant.Alignment, encounter *deviant.Encounter) *deviant.EncounterRequest {
+
+	manhattenPairs := []*manhattenPair{}
+	entityLocations := GenerateEntityLocationPairs(alignment, encounter.Board.Entities.Entities)
+	validMoves := GenerateValidMoveVertexes(encounter.ActiveEntity, encounter.Board.Entities.Entities, encounter)
+
+	for _, validMove := range validMoves {
+		for _, location := range entityLocations {
+
+			distance := int(math.Abs(float64(int32(location.vertex.X)-validMove.X)) + math.Abs(float64(int32(location.vertex.Y)-validMove.Y)))
+			newManhattenPair := &manhattenPair{
+				X:        int32(validMove.X),
+				Y:        int32(validMove.Y),
+				distance: distance,
+			}
+			log.Output(0, fmt.Sprintf("%v", newManhattenPair))
+
+			manhattenPairs = append(manhattenPairs, newManhattenPair)
+		}
+	}
+
+	sort.SliceStable(manhattenPairs, func(i, j int) bool { return manhattenPairs[i].distance < manhattenPairs[j].distance })
+
+	entityMoveAction := &deviant.EntityMoveAction{
+		StartXPosition: int32(GetEntityVertex(encounter.ActiveEntity, encounter.Board.Entities.Entities).X),
+		StartYPosition: int32(GetEntityVertex(encounter.ActiveEntity, encounter.Board.Entities.Entities).Y),
+		FinalXPosition: int32(manhattenPairs[0].X),
+		FinalYPosition: int32(manhattenPairs[0].Y),
+	}
+
+	encounterRequest := &deviant.EncounterRequest{
+		PlayerId:         encounter.ActiveEntity.Id,
+		EntityActionName: deviant.EntityActionNames_MOVE,
+		EntityMoveAction: entityMoveAction,
+	}
+
+	return encounterRequest
+}
+
 func TakeTurn(encounterResponse *deviant.EncounterResponse) []*deviant.EncounterRequest {
 
 	encounterRequests := []*deviant.EncounterRequest{}
 
-	allHittingMoveCombinations := FilterCardPlaysToHits(encounterResponse.Encounter.Board.Entities.Entities, encounterResponse.Encounter, deviant.Alignment_NEUTRAL)
+	allHittingMoveCombinations := FilterCardPlaysToHits(encounterResponse.Encounter.Board.Entities.Entities, encounterResponse.Encounter, deviant.Alignment_FRIENDLY)
 	bestMovesInDamageOrder := SortCardPlaysByDamageInflicted(allHittingMoveCombinations, encounterResponse.Encounter.Board.Entities)
-	entityLocationVertexPairs := GenerateEntityLocationPairs(deviant.Alignment_NEUTRAL, encounterResponse.Encounter.Board.Entities.Entities)
-	theBestPlay := GetPlayThatDealsTheMostDamageToTheLowestHealthTargets(bestMovesInDamageOrder, entityLocationVertexPairs)
+	entityLocationVertexPairs := GenerateEntityLocationPairs(deviant.Alignment_FRIENDLY, encounterResponse.Encounter.Board.Entities.Entities)
 
-	log.Output(0, fmt.Sprintf("%v", encounterResponse.Encounter.ActiveEntity.Id))
+	theBestPlay := GetPlayThatDealsTheMostDamageToTheLowestHealthTargets(bestMovesInDamageOrder, entityLocationVertexPairs)
 
 	if theBestPlay != nil {
 		moveEncounterRequest := GenerateMoveAction(theBestPlay, encounterResponse.Encounter)
-		log.Output(0, fmt.Sprintf("%v", moveEncounterRequest))
 
-		moveEncounterRequest.PlayerId = "0001"
+		moveEncounterRequest.PlayerId = "0002"
 		targetEncounterRequest := GenerateTargetAction(theBestPlay, encounterResponse.Encounter)
 
-		targetEncounterRequest.PlayerId = "0001"
+		targetEncounterRequest.PlayerId = "0002"
 		playEncounterRequest := GeneratePlayAction(theBestPlay, encounterResponse.Encounter)
-		playEncounterRequest.PlayerId = "0001"
+		playEncounterRequest.PlayerId = "0002"
 
 		clearTargetAction := GenerateClearTargetAction(encounterResponse.Encounter)
-		clearTargetAction.PlayerId = "0001"
+		clearTargetAction.PlayerId = "0002"
 
 		encounterRequests = append(encounterRequests, moveEncounterRequest)
 		encounterRequests = append(encounterRequests, targetEncounterRequest)
 		encounterRequests = append(encounterRequests, playEncounterRequest)
 		encounterRequests = append(encounterRequests, clearTargetAction)
+	} else {
+		moveEncounterRequest := GenerateClosestMove(deviant.Alignment_FRIENDLY, encounterResponse.Encounter)
+		moveEncounterRequest.PlayerId = "0002"
+		encounterRequests = append(encounterRequests, moveEncounterRequest)
 	}
 
 	endTurnEncounterRequest := GenerateEndTurnAction(encounterResponse.Encounter)
-	endTurnEncounterRequest.PlayerId = "0001"
+	endTurnEncounterRequest.PlayerId = "0002"
 	encounterRequests = append(encounterRequests, endTurnEncounterRequest)
 
 	return encounterRequests

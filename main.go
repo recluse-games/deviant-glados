@@ -17,7 +17,7 @@ import (
 func createEncounter() *deviant.EncounterRequest {
 	encounterRequest := &deviant.EncounterRequest{}
 	encounterRequest.EncounterCreateAction = &deviant.EncounterCreateAction{}
-	encounterRequest.PlayerId = "0001"
+	encounterRequest.PlayerId = "0002"
 
 	return encounterRequest
 }
@@ -57,13 +57,15 @@ func main() {
 		for {
 			singleEncounterRes := <-ch.Out()
 			if singleEncounterRes != nil {
-				log.Printf("Current Active Entity %v", singleEncounterRes.(*deviant.EncounterResponse).Encounter.ActiveEntity.Id)
+				if singleEncounterRes.(*deviant.EncounterResponse).Encounter.ActiveEntity.OwnerId == "0002" {
+					log.Printf("Current Active Entity %v", singleEncounterRes.(*deviant.EncounterResponse).Encounter.ActiveEntity.Id)
 
-				for _, request := range hunting.TakeTurn(singleEncounterRes.(*deviant.EncounterResponse)) {
-					log.Printf("Sending Request: %v", request)
-					time.Sleep(500 * time.Millisecond)
-					if err := stream.Send(request); err != nil {
-						log.Fatalf("Failed to send a note: %v", err)
+					for _, request := range hunting.TakeTurn(singleEncounterRes.(*deviant.EncounterResponse)) {
+						log.Printf("Sending Request: %v", request)
+						time.Sleep(500 * time.Millisecond)
+						if err := stream.Send(request); err != nil {
+							log.Fatalf("Failed to send a note: %v", err)
+						}
 					}
 				}
 			}
