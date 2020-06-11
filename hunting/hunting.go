@@ -695,41 +695,32 @@ func GenerateClosestMove(alignment deviant.Alignment, encounter *deviant.Encount
 	return encounterRequest
 }
 
-func TakeTurn(encounterResponse *deviant.EncounterResponse) []*deviant.EncounterRequest {
+func TakeTurn(encounterResponse *deviant.EncounterResponse, alignmentToHunt deviant.Alignment) []*deviant.EncounterRequest {
 
 	encounterRequests := []*deviant.EncounterRequest{}
 
-	allHittingMoveCombinations := FilterCardPlaysToHits(encounterResponse.Encounter.Board.Entities.Entities, encounterResponse.Encounter, deviant.Alignment_FRIENDLY)
+	allHittingMoveCombinations := FilterCardPlaysToHits(encounterResponse.Encounter.Board.Entities.Entities, encounterResponse.Encounter, alignmentToHunt)
 	bestMovesInDamageOrder := SortCardPlaysByDamageInflicted(allHittingMoveCombinations, encounterResponse.Encounter.Board.Entities)
-	entityLocationVertexPairs := GenerateEntityLocationPairs(deviant.Alignment_FRIENDLY, encounterResponse.Encounter.Board.Entities.Entities)
+	entityLocationVertexPairs := GenerateEntityLocationPairs(alignmentToHunt, encounterResponse.Encounter.Board.Entities.Entities)
 
 	theBestPlay := GetPlayThatDealsTheMostDamageToTheLowestHealthTargets(bestMovesInDamageOrder, entityLocationVertexPairs)
 
 	if theBestPlay != nil {
 		moveEncounterRequest := GenerateMoveAction(theBestPlay, encounterResponse.Encounter)
-
-		moveEncounterRequest.PlayerId = "0002"
 		targetEncounterRequest := GenerateTargetAction(theBestPlay, encounterResponse.Encounter)
-
-		targetEncounterRequest.PlayerId = "0002"
 		playEncounterRequest := GeneratePlayAction(theBestPlay, encounterResponse.Encounter)
-		playEncounterRequest.PlayerId = "0002"
-
 		clearTargetAction := GenerateClearTargetAction(encounterResponse.Encounter)
-		clearTargetAction.PlayerId = "0002"
 
 		encounterRequests = append(encounterRequests, moveEncounterRequest)
 		encounterRequests = append(encounterRequests, targetEncounterRequest)
 		encounterRequests = append(encounterRequests, playEncounterRequest)
 		encounterRequests = append(encounterRequests, clearTargetAction)
 	} else {
-		moveEncounterRequest := GenerateClosestMove(deviant.Alignment_FRIENDLY, encounterResponse.Encounter)
-		moveEncounterRequest.PlayerId = "0002"
+		moveEncounterRequest := GenerateClosestMove(alignmentToHunt, encounterResponse.Encounter)
 		encounterRequests = append(encounterRequests, moveEncounterRequest)
 	}
 
 	endTurnEncounterRequest := GenerateEndTurnAction(encounterResponse.Encounter)
-	endTurnEncounterRequest.PlayerId = "0002"
 	encounterRequests = append(encounterRequests, endTurnEncounterRequest)
 
 	return encounterRequests
